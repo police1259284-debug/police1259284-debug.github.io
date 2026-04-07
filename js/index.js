@@ -44,7 +44,12 @@ const emptyFc = () => ({ type: 'FeatureCollection', features: [] });
 
 function getCountyName(props = {}) {
     const raw =
-        props.NAME
+        props.NAME ||
+        props.name ||
+        props.COUNTY ||
+        props.county ||
+        props.COUNTYNAME ||
+        props.county_name ||
         '';
 
     return String(raw)
