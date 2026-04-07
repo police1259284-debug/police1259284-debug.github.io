@@ -42,8 +42,6 @@ var countyData = null;
 const emptyFc = () => ({ type: 'FeatureCollection', features: [] });
 
 
-// Function to retrieve county name from properties
-// Multiple property names included because I don't know which one it really is
 function getCountyName(props = {}) {
     const raw =
         props.NAME ||
@@ -54,7 +52,6 @@ function getCountyName(props = {}) {
         props.county_name ||
         '';
 
-    // Also normalize the name
     return String(raw)
         .replace(/\s+County$/i, '')
         .replace(/\s+Parish$/i, '')
@@ -62,8 +59,6 @@ function getCountyName(props = {}) {
         .toUpperCase();
 }
 
-
-// Function to check which counties intersect with the drawn polygon
 function countyIntersections(poly) {
     if (!countyData || !Array.isArray(countyData.features)) {
         return { names: [], features: [] };
@@ -92,14 +87,11 @@ function countyIntersections(poly) {
     };
 }
 
-
-// Once the map loads, add the layers and the drawing layers
 map.on('load', async () => {
-    // Radar
     map.addSource('radar', {
         type: 'raster',
         tiles: [
-            'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}&cachebust=' + Date.now()
+            'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}'
         ],
         tileSize: 256
     });
@@ -110,7 +102,6 @@ map.on('load', async () => {
         paint: { 'raster-opacity': 0.65 }
     });
 
-    // Start and end points
     map.addSource('draw-pts', { type: 'geojson', data: emptyFc() });
     map.addLayer({
         id: 'draw-pts',
@@ -124,7 +115,6 @@ map.on('load', async () => {
         }
     });
 
-    // Storm line between the two points
     map.addSource('draw-line', { type: 'geojson', data: emptyFc() });
     map.addLayer({
         id: 'draw-line',
@@ -138,7 +128,6 @@ map.on('load', async () => {
         }
     });
 
-    // Polygon preview layer
     map.addSource('preview-poly', { type: 'geojson', data: emptyFc() });
     map.addLayer({
         id: 'preview-poly-fill',
@@ -160,7 +149,6 @@ map.on('load', async () => {
         }
     });
 
-    // Warning polygons layer
     map.addSource('warnings', { type: 'geojson', data: emptyFc() });
     map.addLayer({
         id: 'warnings-fill',
@@ -181,7 +169,6 @@ map.on('load', async () => {
         }
     });
 
-    // County hit layer
     map.addSource('county-hit', { type: 'geojson', data: emptyFc() });
     map.addLayer({
         id: 'county-hit-fill',
@@ -204,7 +191,6 @@ map.on('load', async () => {
     });
 
     try {
-        // Populate counties on the map
         const res = await fetch(COUNTIES_GEOJSON_URL);
         if (!res.ok) throw new Error(`County dataset request failed (${res.status})`);
         countyData = await res.json();
@@ -230,13 +216,12 @@ map.on('load', async () => {
             }
         });
 
-        setApplicationStatusText('READY');
+        setApplicationStatusText('COUNTY DATA LOADED — READY');
     } catch (err) {
         console.error(err);
-        setApplicationStatusText('! COUNTY DATA UNAVAILABLE');
+        setApplicationStatusText('COUNTY DATA UNAVAILABLE — GEOMETRY INTERSECTIONS DISABLED');
     }
 
-    // Visual feedback and popup for warnings
     map.on('mouseenter', 'warnings-fill', () => {
         map.getCanvas().style.cursor = 'pointer';
     });
@@ -244,7 +229,6 @@ map.on('load', async () => {
         if (!drawMode) map.getCanvas().style.cursor = '';
     });
 
-    // Click on a warning to view details and options
     map.on('click', 'warnings-fill', (e) => {
         const f = e.features && e.features[0];
         if (!f || !f.properties || !f.properties.id) return;
@@ -271,9 +255,6 @@ map.on('load', async () => {
     });
 });
 
-
-
-// Function to set GeoJSON data to a source safely
 function setGeojson(sourceId, data) {
     const src = map.getSource(sourceId);
     if (src) src.setData(data);
