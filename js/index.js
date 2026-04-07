@@ -33,6 +33,7 @@ setInterval(() => {
 
 // Application states
 var drawMode = false, drawPts = [];
+var lineBackPoint = null, isDraggingStart = false;
 var currentPolygon = null, currentCounties = [], currentPhenom = 'TOR';
 var activeTags = {};
 var warnings = [];
@@ -253,6 +254,48 @@ map.on('load', async () => {
             btn.addEventListener('click', () => dropAlert(f.properties.id));
         }
     });
+
+    map.on('mouseenter', 'draw-pts', () => {
+        if (lineBackPoint && !drawMode) map.getCanvas().style.cursor = 'grab';
+    });
+    map.on('mouseleave', 'draw-pts', () => {
+        if (!drawMode && !isDraggingStart) map.getCanvas().style.cursor = '';
+    });
+});
+
+// Start-point drag handling
+map.on('mousedown', function (e) {
+    if (!lineBackPoint || drawMode || drawPts.length < 2) return;
+    const px = map.project(drawPts[0]);
+    const dx = px.x - e.point.x, dy = px.y - e.point.y;
+    if (Math.sqrt(dx * dx + dy * dy) > 12) return;
+    isDraggingStart = true;
+    map.dragPan.disable();
+});
+
+map.on('mousemove', function (e) {
+    if (!isDraggingStart) return;
+    const line = turf.lineString([lineBackPoint, drawPts[1]]);
+    const snapped = turf.nearestPointOnLine(line, turf.point([e.lngLat.lng, e.lngLat.lat]));
+    const snappedCoords = snapped.geometry.coordinates;
+    const totalLen = turf.length(line, { units: 'miles' });
+    const snapDist = turf.distance(turf.point(lineBackPoint), turf.point(snappedCoords), { units: 'miles' });
+    if (snapDist <= totalLen * 0.95) {
+        drawPts[0] = snappedCoords;
+    }
+    setGeojson('draw-pts', {
+        type: 'FeatureCollection',
+        features: drawPts.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: p }, properties: {} }))
+    });
+    map.getCanvas().style.cursor = 'grabbing';
+});
+
+map.on('mouseup', function () {
+    if (!isDraggingStart) return;
+    isDraggingStart = false;
+    map.dragPan.enable();
+    map.getCanvas().style.cursor = lineBackPoint ? 'grab' : '';
+    buildPolygon();
 });
 
 function setGeojson(sourceId, data) {
@@ -268,8 +311,11 @@ function updateDrawLayers() {
     }));
     setGeojson('draw-pts', { type: 'FeatureCollection', features: pointFeatures });
 
-    const lineFeatures = drawPts.length === 2
-        ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: drawPts }, properties: {} }]
+    const lineCoords = drawPts.length === 2
+        ? (lineBackPoint ? [lineBackPoint, drawPts[1]] : drawPts.slice())
+        : null;
+    const lineFeatures = lineCoords
+        ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: lineCoords }, properties: {} }]
         : [];
     setGeojson('draw-line', { type: 'FeatureCollection', features: lineFeatures });
 }
@@ -322,7 +368,6 @@ function initWarn(phenom) {
     document.getElementById('phenom').value = phenom;
     phenomChange();
     document.getElementById('panel').classList.remove('hidden');
-    document.getElementById('drawBtn').style.display = 'block';
     setApplicationStatusText('PRODUCT SELECTED — CLICK ✛ DRAW OR USE VECTOR TAB TO PLACE POLYGON');
     tab('v');
 }
@@ -340,6 +385,8 @@ function startDraw() {
 
 function cancelDraw() {
     drawMode = false; drawPts = [];
+    lineBackPoint = null; isDraggingStart = false;
+    map.dragPan.enable();
     map.getCanvas().style.cursor = '';
     document.getElementById('helpTooltip').style.display = 'none';
     updateDrawLayers();
@@ -360,6 +407,11 @@ map.on('click', function (e) {
         drawMode = false;
         map.getCanvas().style.cursor = '';
         document.getElementById('helpTooltip').style.display = 'none';
+        const _p1 = turf.point(drawPts[0]), _p2 = turf.point(drawPts[1]);
+        const _bearing = turf.bearing(_p1, _p2);
+        const _dist = turf.distance(_p1, _p2, { units: 'miles' });
+        lineBackPoint = turf.destination(_p1, _dist, _bearing + 180, { units: 'miles' }).geometry.coordinates;
+        updateDrawLayers();
         buildPolygon();
     }
 });
@@ -502,7 +554,8 @@ function issueProduct() {
     if (phenom === 'TOR') {
         hazard = `* TORNADO...${torSrc}\n* HAIL...POSSIBLE\n* WIND...POSSIBLE`;
     } else if (phenom === 'SVR') {
-        hazard = `* WIND...${wind} EXPECTED\n* HAIL...${hailV}${isTorPoss ? '\n* TORNADO...POSSIBLE' : ''}`;
+        hazard = `* WIND...${wind} EXPECTED
+                  * HAIL...${hailV}${isTorPoss ? '\n* TORNADO...POSSIBLE' : ''}`;
     } else if (phenom === 'FFW') {
         hazard = `* FLASH FLOODING...LIFE THREATENING\n* RAINFALL...EXCESSIVE`;
     } else {
@@ -510,12 +563,12 @@ function issueProduct() {
     }
 
     const action = phenom === 'TOR'
-        ? 'MOVE TO AN INTERIOR ROOM ON THE LOWEST FLOOR OF A STURDY BUILDING. STAY AWAY FROM WINDOWS.'
-        : phenom === 'SVR'
-            ? 'MOVE INSIDE A STURDY BUILDING. LARGE HAIL AND DAMAGING WINDS CAN SHATTER WINDOWS.'
-            : phenom === 'FFW'
-                ? 'MOVE TO HIGHER GROUND NOW. DO NOT ATTEMPT TO CROSS FLOODED ROADS.'
-                : 'PULL OFF THE ROAD IF VISIBILITY DROPS. STAY IN YOUR VEHICLE.';
+        ? ''
+    : phenom === 'SVR'
+        ? 'MOVE INSIDE A STURDY BUILDING. LARGE HAIL AND DAMAGING WINDS CAN SHATTER WINDOWS.'
+    : phenom === 'FFW'
+        ? 'MOVE TO HIGHER GROUND NOW. DO NOT ATTEMPT TO CROSS FLOODED ROADS.'
+        : 'PULL OFF THE ROAD IF VISIBILITY DROPS. STAY IN YOUR VEHICLE.';
 
     const countyLine = currentCounties.map(c => c + ' TX').join('...') || 'NO COUNTIES DETECTED';
 
@@ -577,7 +630,6 @@ function clearAll() {
     document.getElementById('issueBtn').disabled = true;
     document.getElementById('productOut').textContent = 'TEXAS ALERT SERVICE — WARNGEN\nAWAITING PRODUCT...';
     setApplicationStatusText('READY');
-    document.getElementById('drawBtn').style.display = 'none';
     document.getElementById('panel').classList.add('hidden');
 }
 
