@@ -124,7 +124,7 @@ html {
 
 .tb-x {
     color: #555;
-    border-color: #333;
+    border-color: #666;
 }
 
 .tb-x:hover {
@@ -248,7 +248,7 @@ html {
     text-transform: uppercase;
     text-align: center;
     cursor: pointer;
-    color: #333;
+    color: #666;
     border: none;
     border-bottom: 2px solid transparent;
     background: transparent;
@@ -291,11 +291,12 @@ html {
 
 .slabel {
     font-size: medium;
-    color: #444;
+    color: #888;
     letter-spacing: 2px;
     text-transform: uppercase;
     margin-bottom: 6px;
     padding-bottom: 4px;
+    margin-top: 12px;
     border-bottom: 1px solid #111;
     display: flex;
     align-items: center;
@@ -326,7 +327,7 @@ input[type=text] {
 
 select:focus,
 input:focus {
-    border-color: #333;
+    border-color: #666;
 }
 
 label {
@@ -355,7 +356,7 @@ label {
     font-family: 'Courier New', monospace;
     border: 1px solid #1a1a1a;
     cursor: pointer;
-    color: #444;
+    color: #888;
     background: transparent;
     letter-spacing: 0.5px;
 }
@@ -381,7 +382,7 @@ label {
     align-items: center;
     gap: 8px;
     font-size: medium;
-    color: #444;
+    color: #888;
     margin-bottom: 5px;
 }
 
@@ -434,7 +435,7 @@ label {
 
 .ibtn:disabled {
     background: #111;
-    color: #333;
+    color: #666;
     cursor: not-allowed;
 }
 
@@ -467,7 +468,7 @@ label {
 
 .county-hint {
     font-size: medium;
-    color: #333;
+    color: #666;
 }
 
 .maplibregl-popup-content {
@@ -531,8 +532,8 @@ label {
 }
 
 .pbtn-d {
-    color: #444;
-    border-color: #333;
+    color: #888;
+    border-color: #666;
 }
 
 .pbtn-d:hover {
@@ -547,5 +548,5 @@ label {
 }
 
 .maplibregl-ctrl-attrib a {
-    color: #333 !important;
+    color: #666 !important;
 }

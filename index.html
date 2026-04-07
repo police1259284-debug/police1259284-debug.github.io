@@ -20,7 +20,7 @@
   <div id="header">
     <span class="logo">TAS WARNGEN</span>
     <div class="wrapper">
-      <button class="tb" onclick="startDraw()" id="drawBtn">+ DRAW</button>
+      <!--<button class="tb" onclick="startDraw()" id="drawBtn">+ DRAW</button>-->
       <button class="tb" onclick="clearAll()">CLEAR</button>
       <button class="tb" onclick="tab('p')">MENU</button>
     </div>
@@ -35,7 +35,7 @@
     <span id="zulu">--:--:-- Z</span>
   </div>
 
-  <div id="panel" class="">
+  <div id="panel" class="hidden">
     <div class="ptabs">
       <button class="ptab on" id="tab-p" onclick="tab('p')">PARAMS</button>
       <button class="ptab" id="tab-v" onclick="tab('v')">VECTOR</button>
@@ -56,7 +56,7 @@
 
       <!-- Updated PARAMS TAB section with CWA dropdown -->
       <div class="params-tab">
-        <label for="cwa">County Warning Area (CWA):</label>
+        <div class="slabel">County Warning Area (CWA)</div>
         <select id="cwa" name="cwa">
           <option value="">Select CWA</option>
           <option value="cwa1">CWA 1</option>

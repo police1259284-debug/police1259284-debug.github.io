@@ -92,7 +92,7 @@ map.on('load', async () => {
     map.addSource('radar', {
         type: 'raster',
         tiles: [
-            'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}'
+            'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}&cachebust=' + Date.now()
         ],
         tileSize: 256
     });
@@ -102,6 +102,14 @@ map.on('load', async () => {
         source: 'radar',
         paint: { 'raster-opacity': 0.65 }
     });
+
+    // Keep the radar layer updated every minute
+    setInterval(() => {
+        const source = map.getSource('radar');
+        if (source) source.setTiles([
+            'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}&cachebust=' + Date.now()
+        ]);
+    }, 60000);
 
     map.addSource('draw-pts', { type: 'geojson', data: emptyFc() });
     map.addLayer({
@@ -346,6 +354,7 @@ function refreshWarningsLayer() {
 }
 
 function tab(id) {
+    document.getElementById('panel').classList.remove('hidden');
     document.querySelectorAll('.ptab').forEach(t => t.classList.remove('on'));
     document.querySelectorAll('.tc').forEach(t => t.classList.remove('on'));
     document.getElementById('tab-' + id).classList.add('on');
@@ -554,8 +563,7 @@ function issueProduct() {
     if (phenom === 'TOR') {
         hazard = `* TORNADO...${torSrc}\n* HAIL...POSSIBLE\n* WIND...POSSIBLE`;
     } else if (phenom === 'SVR') {
-        hazard = `* WIND...${wind} EXPECTED
-                  * HAIL...${hailV}${isTorPoss ? '\n* TORNADO...POSSIBLE' : ''}`;
+        hazard = `* WIND...${wind} EXPECTED\n* HAIL...${hailV}${isTorPoss ? '\n* TORNADO...POSSIBLE' : ''}`;
     } else if (phenom === 'FFW') {
         hazard = `* FLASH FLOODING...LIFE THREATENING\n* RAINFALL...EXCESSIVE`;
     } else {
@@ -585,7 +593,7 @@ ${tagLines.length ? '\n' + tagLines.join('\n') + '\n' : ''}
 
 ${countyLine}
 
-* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.split(' ')[0]} NEAR THE WARNING AREA, MOVING ${motDir}° AT ${motSpdMph} MPH.
+* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '')} NEAR THE WARNING AREA, MOVING ${motDir}° AT ${motSpdMph} MPH.
 
 * HAZARD...
 ${hazard}
