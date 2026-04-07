@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <!-- Meta tags -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TAS | WARNGEN</title>
+
+  <!-- MapLibre GL CSS -->
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+
+  <!-- Application CSS -->
+  <link href="style.css" rel="stylesheet" />
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div id="header">
+    <span class="logo">TAS WARNGEN</span>
+    <div class="wrapper">
+      <button class="tb" onclick="startDraw()" id="drawBtn">+ DRAW</button>
+      <button class="tb" onclick="clearAll()">CLR</button>
+    </div>
+  </div>
+
+  <!-- Help overlay -->
+  <div id="helpTooltip">CLICK POINT - STORM ORIGIN &nbsp;|&nbsp; ESC TO CANCEL</div>
+
+  <!-- Footer -->
+  <div id="footer">
+    <span id="sb-status">READY</span>
+    <span id="zulu">--:--:-- Z</span>
+  </div>
+
+  <div id="panel" class="">
+    <div class="ptabs">
+      <button class="ptab on" id="tab-p" onclick="tab('p')">PARAMS</button>
+      <button class="ptab" id="tab-v" onclick="tab('v')">VECTOR</button>
+      <button class="ptab" id="tab-out" onclick="tab('out')">PRODUCT</button>
+    </div>
+
+    <!-- PARAMS TAB -->
+    <div class="tc on" id="tc-p">
+      <div class="sec">
+        <div class="slabel">Product Type</div>
+        <select id="phenom" onchange="phenomChange()">
+          <option value="TOR">TORNADO WARNING</option>
+          <option value="SVR">SEVERE THUNDERSTORM WARNING</option>
+          <option value="FFW">FLASH FLOOD WARNING</option>
+          <option value="SQW">SNOW SQUALL WARNING</option>
+        </select>
+      </div>
+
+      <div class="sec" id="tor-sec">
+        <div class="slabel">Tornado Tags</div>
+        <div class="tags">
+          <button class="tag pds" id="tag-pds" onclick="toggleTag('pds')">PDS</button>
+          <button class="tag emer" id="tag-emer" onclick="toggleTag('emer')">TOR EMERGENCY</button>
+          <button class="tag" id="tag-consid" onclick="toggleTag('consid')">CONSIDERABLE</button>
+          <button class="tag" id="tag-catast" onclick="toggleTag('catast')">CATASTROPHIC</button>
+          <button class="tag" id="tag-obs" onclick="toggleTag('obs')">OBSERVED</button>
+        </div>
+        <div class="slabel">Source</div>
+        <select id="torSource">
+          <option>RADAR INDICATED</option>
+          <option>OBSERVED</option>
+          <option>TRAINED SPOTTER CONFIRMED</option>
+          <option>LAW ENFORCEMENT CONFIRMED</option>
+        </select>
+        <label>VALID (MIN)</label>
+        <select id="valid">
+          <option>30</option>
+          <option>45</option>
+          <option selected>60</option>
+          <option>90</option>
+        </select>
+      </div>
+
+      <div class="sec is-hidden" id="svr-sec">
+        <div class="slabel">Severe T'Storm Hazards</div>
+        <div class="tags">
+          <button class="tag pds" id="tag-svr-pds" onclick="toggleTag('svr-pds')">PDS</button>
+          <button class="tag" id="tag-destr" onclick="toggleTag('destr')">DESTRUCTIVE</button>
+          <button class="tag" id="tag-torposs" onclick="toggleTag('torposs')">TORNADO POSSIBLE</button>
+        </div>
+        <div class="row2">
+          <div><label>MAX WIND GUST</label>
+            <select id="wind">
+              <option>60 MPH</option>
+              <option>70 MPH</option>
+              <option>75 MPH</option>
+              <option>80 MPH</option>
+              <option>90 MPH</option>
+              <option>100 MPH</option>
+            </select>
+          </div>
+          <div><label>VALID (MIN)</label>
+            <select id="valid2">
+              <option>30</option>
+              <option>45</option>
+              <option selected>60</option>
+            </select>
+          </div>
+        </div>
+        <label>HAIL SIZE</label>
+        <select id="hail">
+          <option>PENNY SIZE (0.75 IN)</option>
+          <option>NICKEL SIZE (0.88 IN)</option>
+          <option>QUARTER SIZE (1.00 IN)</option>
+          <option>HALF DOLLAR SIZE (1.25 IN)</option>
+          <option>GOLF BALL SIZE (1.75 IN)</option>
+          <option>TENNIS BALL SIZE (2.50 IN)</option>
+          <option>BASEBALL SIZE (2.75 IN)</option>
+          <option>SOFTBALL SIZE (4.00 IN)</option>
+        </select>
+      </div>
+
+      <div class="sec">
+        <div class="slabel">Counties Affected</div>
+        <div id="countyChips"><span class="county-hint">Draw polygon to populate...</span></div>
+      </div>
+    </div>
+
+    <!-- VECTOR TAB -->
+    <div class="tc" id="tc-v">
+      <div class="sec vector-steps-box">
+        <div class="vstep">
+          <div class="vnum" id="v1">1</div><span>Click storm origin on map</span>
+        </div>
+        <div class="vstep">
+          <div class="vnum" id="v2">2</div><span>Click projected storm position</span>
+        </div>
+        <div id="vstatus">AWAITING INPUT</div>
+        <div class="vector-action-row">
+          <button class="tb tb-g vector-draw-btn" onclick="startDraw()">+ DRAW VECTOR</button>
+          <button class="tb tb-x vector-clear-btn" onclick="cancelDraw()">CLR</button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="slabel">Storm Motion</div>
+        <div class="row2">
+          <div><label>DIRECTION (° FROM)</label><input type="number" id="motDir" placeholder="225" min="0" max="360">
+          </div>
+          <div><label>SPEED (MPH)</label><input type="number" id="motSpd" placeholder="35" min="0" max="120"></div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="slabel">Polygon Width</div>
+        <div class="row2">
+          <div><label>UPWIND (MI)</label><input type="number" id="wUp" value="10" min="3" max="30"></div>
+          <div><label>DOWNWIND (MI)</label><input type="number" id="wDn" value="22" min="8" max="50"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PRODUCT TAB -->
+    <div class="tc" id="tc-out">
+      <div class="product-toolbar">
+        <button class="ibtn" id="issueBtn" onclick="issueProduct()" disabled>ISSUE WARNING</button>
+      </div>
+      <div id="productOut">TEXAS ALERT SERVICE — WARNGEN
+        AWAITING PRODUCT...</div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+  <script src="js/index.js"></script>
+</body>
+
+</html>
