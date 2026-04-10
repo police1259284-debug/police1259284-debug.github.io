@@ -49,9 +49,22 @@
         <select id="phenom" onchange="phenomChange()">
           <option value="TOR">TORNADO WARNING</option>
           <option value="SVR">SEVERE THUNDERSTORM WARNING</option>
+          <option value="TOA">TORNADO WATCH</option>
+          <option value="SVA">SEVERE THUNDERSTORM WATCH</option>
           <option value="FFW">FLASH FLOOD WARNING</option>
           <option value="SQW">SNOW SQUALL WARNING</option>
         </select>
+      </div>
+
+      <div class="sec">
+        <div class="slabel">Area Selection</div>
+        <div class="vector-action-row">
+          <button class="tb tb-g vector-draw-btn" onclick="startDraw()">DRAW POLYGON</button>
+          <button class="tb tb-b vector-draw-btn" onclick="startCountySelect()">CLICK COUNTIES</button>
+        </div>
+        <div class="vector-action-row">
+          <button class="tb tb-x vector-clear-btn" onclick="clearAreaSelection()">CLEAR AREA</button>
+        </div>
       </div>
 
       <!-- Updated PARAMS TAB section with CWA dropdown -->
@@ -132,7 +145,7 @@
 
       <div class="sec">
         <div class="slabel">Counties Affected</div>
-        <div id="countyChips"><span class="county-hint">Draw polygon to populate...</span></div>
+        <div id="countyChips"><span class="county-hint">Draw polygon or click counties to populate...</span></div>
       </div>
     </div>
 
@@ -173,7 +186,7 @@
     <!-- PRODUCT TAB -->
     <div class="tc" id="tc-out">
       <div class="product-toolbar">
-        <button class="ibtn" id="issueBtn" onclick="issueProduct()" disabled>ISSUE WARNING</button>
+        <button class="ibtn" id="issueBtn" onclick="issueProduct()" disabled>ISSUE PRODUCT</button>
       </div>
       <div id="productOut">TEXAS ALERT SERVICE — WARNGEN
         AWAITING PRODUCT...</div>

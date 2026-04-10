@@ -33,12 +33,14 @@ setInterval(() => {
 
 // Application states
 var drawMode = false, drawPts = [];
+var countySelectMode = false;
 var lineBackPoint = null, isDraggingStart = false;
 var currentPolygon = null, currentCounties = [], currentPhenom = 'TOR';
 var activeTags = {};
 var warnings = [];
 var activePopup = null;
 var countyData = null;
+var selectedCountyFeatures = {};
 // Empty feature collection generator
 const emptyFc = () => ({ type: 'FeatureCollection', features: [] });
 
@@ -58,6 +60,18 @@ function getCountyName(props = {}) {
         .replace(/\s+Parish$/i, '')
         .trim()
         .toUpperCase();
+}
+
+function getCountyId(props = {}) {
+    return String(
+        props.GEOID ||
+        props.geoid ||
+        props.FIPS ||
+        props.fips ||
+        props.COUNTYFP ||
+        props.countyfp ||
+        getCountyName(props)
+    ).trim();
 }
 
 function countyIntersections(poly) {
@@ -225,6 +239,19 @@ map.on('load', async () => {
             }
         });
 
+        map.on('mouseenter', 'counties-fill', () => {
+            if (countySelectMode) map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('mouseleave', 'counties-fill', () => {
+            if (!drawMode && !countySelectMode && !isDraggingStart) map.getCanvas().style.cursor = '';
+        });
+        map.on('click', 'counties-fill', (e) => {
+            if (!countySelectMode) return;
+            const feature = e.features && e.features[0];
+            if (!feature) return;
+            toggleCountySelection(feature);
+        });
+
         setApplicationStatusText('COUNTY DATA LOADED — READY');
     } catch (err) {
         console.error(err);
@@ -235,7 +262,7 @@ map.on('load', async () => {
         map.getCanvas().style.cursor = 'pointer';
     });
     map.on('mouseleave', 'warnings-fill', () => {
-        if (!drawMode) map.getCanvas().style.cursor = '';
+        if (!drawMode && !countySelectMode) map.getCanvas().style.cursor = '';
     });
 
     map.on('click', 'warnings-fill', (e) => {
@@ -363,8 +390,10 @@ function tab(id) {
 
 function phenomChange() {
     const v = document.getElementById('phenom').value;
-    document.getElementById('tor-sec').style.display = v === 'TOR' ? '' : 'none';
-    document.getElementById('svr-sec').style.display = v === 'SVR' ? '' : 'none';
+    currentPhenom = v;
+    document.getElementById('tor-sec').style.display = (v === 'TOR' || v === 'TOA') ? '' : 'none';
+    document.getElementById('svr-sec').style.display = (v === 'SVR' || v === 'SVA') ? '' : 'none';
+    document.getElementById('issueBtn').textContent = (v === 'TOA' || v === 'SVA') ? 'ISSUE WATCH' : 'ISSUE WARNING';
 }
 
 function toggleTag(id) {
@@ -382,7 +411,14 @@ function initWarn(phenom) {
 }
 
 function startDraw() {
+    countySelectMode = false;
     cancelDraw();
+    selectedCountyFeatures = {};
+    setGeojson('county-hit', emptyFc());
+    currentPolygon = null;
+    currentCounties = [];
+    renderChips();
+    document.getElementById('issueBtn').disabled = true;
     drawMode = true; drawPts = [];
     map.getCanvas().style.cursor = 'crosshair';
     document.getElementById('helpTooltip').style.display = 'block';
@@ -392,8 +428,94 @@ function startDraw() {
     setApplicationStatusText('DRAWING MODE — CLICK STORM ORIGIN ON MAP');
 }
 
+function startCountySelect() {
+    if (!countyData) {
+        setApplicationStatusText('COUNTY DATA UNAVAILABLE — CANNOT SELECT COUNTIES');
+        return;
+    }
+
+    cancelDraw();
+    currentPolygon = null;
+    currentCounties = [];
+    selectedCountyFeatures = {};
+    setGeojson('county-hit', emptyFc());
+    renderChips();
+    document.getElementById('issueBtn').disabled = true;
+    countySelectMode = true;
+    map.getCanvas().style.cursor = 'pointer';
+    document.getElementById('helpTooltip').style.display = 'block';
+    document.getElementById('helpTooltip').textContent = 'CLICK COUNTIES TO TOGGLE SELECTION  |  ESC TO STOP';
+    setApplicationStatusText('COUNTY MODE — CLICK COUNTIES TO BUILD WATCH AREA');
+    tab('p');
+}
+
+function clearAreaSelection() {
+    cancelDraw();
+    currentPolygon = null;
+    currentCounties = [];
+    selectedCountyFeatures = {};
+    setGeojson('county-hit', emptyFc());
+    renderChips();
+    document.getElementById('issueBtn').disabled = true;
+    setApplicationStatusText('AREA CLEARED — SELECT POLYGON OR COUNTIES');
+}
+
+function selectedCountyList() {
+    return Object.values(selectedCountyFeatures);
+}
+
+function buildCountySelectionGeometry(features) {
+    if (!features.length) return null;
+    if (features.length === 1) {
+        return turf.feature(features[0].geometry);
+    }
+
+    const combined = turf.combine(turf.featureCollection(features));
+    if (!combined.features.length) return null;
+    return combined.features[0];
+}
+
+function refreshCountySelectionState() {
+    const selected = selectedCountyList();
+    const geomFeature = buildCountySelectionGeometry(selected);
+    currentPolygon = geomFeature || null;
+    currentCounties = selected
+        .map(f => getCountyName(f.properties))
+        .filter(Boolean)
+        .sort();
+
+    setGeojson('county-hit', {
+        type: 'FeatureCollection',
+        features: selected
+    });
+
+    renderChips();
+    document.getElementById('issueBtn').disabled = !currentPolygon;
+    if (currentPolygon) {
+        setApplicationStatusText(currentCounties.length + ' COUNTIES SELECTED — READY TO ISSUE');
+        tab('out');
+    } else if (countySelectMode) {
+        setApplicationStatusText('COUNTY MODE — CLICK COUNTIES TO BUILD WATCH AREA');
+    }
+}
+
+function toggleCountySelection(feature) {
+    if (!feature || !feature.properties) return;
+    const id = getCountyId(feature.properties);
+    if (!id) return;
+
+    if (selectedCountyFeatures[id]) {
+        delete selectedCountyFeatures[id];
+    } else {
+        selectedCountyFeatures[id] = feature;
+    }
+
+    refreshCountySelectionState();
+}
+
 function cancelDraw() {
     drawMode = false; drawPts = [];
+    countySelectMode = false;
     lineBackPoint = null; isDraggingStart = false;
     map.dragPan.enable();
     map.getCanvas().style.cursor = '';
@@ -447,7 +569,11 @@ function buildPolygon() {
         p1L.geometry.coordinates
     ]]);
 
-    const col = currentPhenom === 'TOR' ? '#CC0000' : currentPhenom === 'SVR' ? '#FF8C00' : '#00AAFF';
+    const col = (currentPhenom === 'TOR' || currentPhenom === 'TOA')
+        ? '#CC0000'
+        : (currentPhenom === 'SVR' || currentPhenom === 'SVA')
+            ? '#FF8C00'
+            : '#00AAFF';
     renderPreviewPolygon(poly, col);
 
     currentPolygon = poly;
@@ -512,10 +638,32 @@ function issueProduct() {
     // Speed field now stores MPH directly, round to nearest 5
     const motSpdMph = Math.round(parseFloat(motSpd) / 5) * 5 || 5;
 
-    const labels = { TOR: 'TORNADO WARNING', SVR: 'SEVERE THUNDERSTORM WARNING', FFW: 'FLASH FLOOD WARNING', SQW: 'SNOW SQUALL WARNING' };
-    const wmos = { TOR: 'WFUS54', SVR: 'WFUS52', FFW: 'WGUS64', SQW: 'WWUS40' };
-    const pils = { TOR: 'TOR', SVR: 'SVR', FFW: 'FFW', SQW: 'SQW' };
+    const labels = {
+        TOR: 'TORNADO WARNING',
+        SVR: 'SEVERE THUNDERSTORM WARNING',
+        TOA: 'TORNADO WATCH',
+        SVA: 'SEVERE THUNDERSTORM WATCH',
+        FFW: 'FLASH FLOOD WARNING',
+        SQW: 'SNOW SQUALL WARNING'
+    };
+    const wmos = {
+        TOR: 'WFUS54',
+        SVR: 'WFUS52',
+        TOA: 'WOUS64',
+        SVA: 'WOUS64',
+        FFW: 'WGUS64',
+        SQW: 'WWUS40'
+    };
+    const pils = {
+        TOR: 'TOR',
+        SVR: 'SVR',
+        TOA: 'TOA',
+        SVA: 'SVA',
+        FFW: 'FFW',
+        SQW: 'SQW'
+    };
     const label = labels[phenom];
+    const isWatch = phenom === 'TOA' || phenom === 'SVA';
 
     const isPDS = activeTags['pds'] || activeTags['svr-pds'];
     const isEmer = activeTags['emer'];
@@ -525,11 +673,15 @@ function issueProduct() {
     const isTorPoss = activeTags['torposs'];
     const isObs = activeTags['obs'];
 
-    const col = phenom === 'TOR' ? (isPDS ? '#FFD700' : isEmer ? '#cc00cc' : '#CC0000') : phenom === 'SVR' ? '#FF8C00' : '#00AAFF';
+    const col = (phenom === 'TOR' || phenom === 'TOA')
+        ? (isPDS ? '#FFD700' : isEmer ? '#cc00cc' : '#CC0000')
+        : (phenom === 'SVR' || phenom === 'SVA')
+            ? '#FF8C00'
+            : '#00AAFF';
 
     const clist = currentCounties.slice(0, 5).join(', ') + (currentCounties.length > 5 ? '...' : '');
 
-    const warningTitle = `${isPDS ? '★ PDS ' : ''}${isEmer ? '⚠ EMER — ' : ''}${label}`;
+    const warningTitle = `${isPDS ? 'PDS ' : ''}${isEmer ? 'EMER - ' : ''}${label}`;
     const warningId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     warnings.push({
         id: warningId,
@@ -540,7 +692,7 @@ function issueProduct() {
             title: warningTitle,
             issued: `${localDisp} ${dateStr}`,
             expires: exZ,
-            motion: `${motDir}° AT ${motSpdMph} MPH`,
+            motion: isWatch ? 'AREA WATCH' : `${motDir} DEG AT ${motSpdMph} MPH`,
             counties: clist || 'NONE'
         }
     });
@@ -549,7 +701,7 @@ function issueProduct() {
 
     let tagLines = [];
     if (isPDS) tagLines.push('...PARTICULARLY DANGEROUS SITUATION...');
-    if (isEmer) tagLines.push('...TORNADO EMERGENCY...');
+    if (isEmer && !isWatch) tagLines.push('...TORNADO EMERGENCY...');
     if (isConsid) tagLines.push('...CONSIDERABLE DAMAGE THREAT...');
     if (isCatast) tagLines.push('...CATASTROPHIC DAMAGE THREAT...');
     if (isDestr) tagLines.push('...THIS IS A DESTRUCTIVE STORM...');
@@ -560,9 +712,9 @@ function issueProduct() {
     const hailV = document.getElementById('hail')?.value || '';
 
     let hazard = '';
-    if (phenom === 'TOR') {
+    if (phenom === 'TOR' || phenom === 'TOA') {
         hazard = `* TORNADO...${torSrc}\n* HAIL...POSSIBLE\n* WIND...POSSIBLE`;
-    } else if (phenom === 'SVR') {
+    } else if (phenom === 'SVR' || phenom === 'SVA') {
         hazard = `* WIND...${wind} EXPECTED\n* HAIL...${hailV}${isTorPoss ? '\n* TORNADO...POSSIBLE' : ''}`;
     } else if (phenom === 'FFW') {
         hazard = `* FLASH FLOODING...LIFE THREATENING\n* RAINFALL...EXCESSIVE`;
@@ -574,11 +726,25 @@ function issueProduct() {
         ? ''
     : phenom === 'SVR'
         ? 'MOVE INSIDE A STURDY BUILDING. LARGE HAIL AND DAMAGING WINDS CAN SHATTER WINDOWS.'
+    : phenom === 'TOA'
+        ? 'BE READY TO TAKE COVER QUICKLY IF A WARNING IS ISSUED. REVIEW YOUR SAFE ROOM PLAN NOW.'
+    : phenom === 'SVA'
+        ? 'PREPARE FOR SEVERE WEATHER ACROSS THE WATCH AREA. SECURE LOOSE OUTDOOR OBJECTS AND MONITOR WARNINGS.'
     : phenom === 'FFW'
         ? 'MOVE TO HIGHER GROUND NOW. DO NOT ATTEMPT TO CROSS FLOODED ROADS.'
         : 'PULL OFF THE ROAD IF VISIBILITY DROPS. STAY IN YOUR VEHICLE.';
 
     const countyLine = currentCounties.map(c => c + ' TX').join('...') || 'NO COUNTIES DETECTED';
+
+    const watchActionLine = phenom === 'TOA'
+        ? '* THIS IS A TORNADO WATCH. CONDITIONS ARE FAVORABLE FOR TORNADOES.'
+        : phenom === 'SVA'
+            ? '* THIS IS A SEVERE THUNDERSTORM WATCH. CONDITIONS ARE FAVORABLE FOR DAMAGING WINDS AND LARGE HAIL.'
+            : '';
+
+    const watchLead = isWatch
+        ? `${countyLine}\n\n${watchActionLine}\n\n* VALID UNTIL ${exZ}.`
+        : `${countyLine}\n\n* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '')} NEAR THE WARNING AREA, MOVING ${motDir} DEG AT ${motSpdMph} MPH.`;
 
     const product =
         `${wmos[phenom]} K${cwa} ${zulu}
@@ -591,9 +757,7 @@ ${localDisp} ${dateStr}
 ${tagLines.length ? '\n' + tagLines.join('\n') + '\n' : ''}
 ...${label} ISSUED...
 
-${countyLine}
-
-* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '')} NEAR THE WARNING AREA, MOVING ${motDir}° AT ${motSpdMph} MPH.
+${watchLead}
 
 * HAZARD...
 ${hazard}
@@ -632,9 +796,10 @@ function clearAll() {
     refreshWarningsLayer();
     cancelDraw();
     currentPolygon = null; currentCounties = []; activeTags = {};
+    selectedCountyFeatures = {};
     setGeojson('county-hit', emptyFc());
     document.querySelectorAll('.tag').forEach(t => t.classList.remove('on'));
-    document.getElementById('countyChips').innerHTML = '<span class="county-hint">Draw polygon to populate...</span>';
+    document.getElementById('countyChips').innerHTML = '<span class="county-hint">Draw polygon or click counties to populate...</span>';
     document.getElementById('issueBtn').disabled = true;
     document.getElementById('productOut').textContent = 'TEXAS ALERT SERVICE — WARNGEN\nAWAITING PRODUCT...';
     setApplicationStatusText('READY');
