@@ -1,7 +1,4 @@
 // CONSTANTS
-// Your API access key to MapTiler
-const MAPTILER_KEY = 'zJhSDWsrNcZcIAcRgIGU';
-
 // URL to the .json of the MapTiler style you want to use
 const MAPTILER_STYLE = 'https://api.maptiler.com/maps/dataviz-dark/style.json';
 
@@ -16,7 +13,7 @@ const COUNTIES_GEOJSON_URL = 'https://raw.githubusercontent.com/BusyBird15/BusyB
 // Create the MapLibre map
 const map = new maplibregl.Map({
     container: 'map',
-    style: `${MAPTILER_STYLE}?key=${MAPTILER_KEY}`,
+    style: `https://tgranz.github.io/maps/spark.json`,
     center: [-99.5, 31.5],
     zoom: 7,
     attributionControl: false,
@@ -41,6 +38,18 @@ var warnings = [];
 var activePopup = null;
 var countyData = null;
 var selectedCountyFeatures = {};
+
+const labelOverlayLayerIds = [
+    'radar',
+    'preview-poly-fill',
+    'preview-poly-line',
+    'warnings-fill',
+    'warnings-line',
+    'county-hit-fill',
+    'county-hit-line',
+    'counties-fill',
+    'counties-line'
+];
 // Empty feature collection generator
 const emptyFc = () => ({ type: 'FeatureCollection', features: [] });
 
@@ -100,6 +109,36 @@ function countyIntersections(poly) {
         names: Array.from(nameSet).sort(),
         features: hitFeatures
     };
+}
+
+function liftLabelsAboveOverlays() {
+    const style = map.getStyle();
+    if (!style || !Array.isArray(style.layers)) return;
+
+    const labelLayerIds = style.layers
+        .filter(layer => layer.type === 'symbol' && layer.layout && layer.layout['text-field'])
+        .map(layer => layer.id);
+
+    if (!labelLayerIds.length) return;
+
+    const firstLabelId = labelLayerIds[0];
+
+    // Keep raster/fill/line overlays below base-map labels.
+    labelOverlayLayerIds.forEach((layerId) => {
+        if (map.getLayer(layerId)) {
+            map.moveLayer(layerId, firstLabelId);
+        }
+    });
+
+    // Keep labels beneath draw aids, but above all warning/area overlays.
+    labelLayerIds.forEach((layerId) => {
+        if (map.getLayer(layerId) && map.getLayer('draw-line')) {
+            map.moveLayer(layerId, 'draw-line');
+        }
+    });
+
+    if (map.getLayer('draw-line')) map.moveLayer('draw-line');
+    if (map.getLayer('draw-pts')) map.moveLayer('draw-pts');
 }
 
 map.on('load', async () => {
@@ -253,10 +292,13 @@ map.on('load', async () => {
         });
 
         setApplicationStatusText('COUNTY DATA LOADED — READY');
+        liftLabelsAboveOverlays();
     } catch (err) {
         console.error(err);
         setApplicationStatusText('COUNTY DATA UNAVAILABLE — GEOMETRY INTERSECTIONS DISABLED');
     }
+
+    liftLabelsAboveOverlays();
 
     map.on('mouseenter', 'warnings-fill', () => {
         map.getCanvas().style.cursor = 'pointer';
@@ -665,12 +707,13 @@ function issueProduct() {
     const label = labels[phenom];
     const isWatch = phenom === 'TOA' || phenom === 'SVA';
 
-    const isPDS = activeTags['pds'] || activeTags['svr-pds'];
+    const isSvr = phenom === 'SVR';
+    const isPDS = activeTags['pds'] || (isSvr && activeTags['svr-pds']);
     const isEmer = activeTags['emer'];
-    const isConsid = activeTags['consid'];
+    const isConsid = activeTags['consid'] || (isSvr && activeTags['svr-consid']);
     const isCatast = activeTags['catast'];
-    const isDestr = activeTags['destr'];
-    const isTorPoss = activeTags['torposs'];
+    const isDestr = isSvr && activeTags['destr'];
+    const isTorPoss = isSvr && activeTags['torposs'];
     const isObs = activeTags['obs'];
 
     const col = (phenom === 'TOR' || phenom === 'TOA')
@@ -681,7 +724,7 @@ function issueProduct() {
 
     const clist = currentCounties.slice(0, 5).join(', ') + (currentCounties.length > 5 ? '...' : '');
 
-    const warningTitle = `${isPDS ? 'PDS ' : ''}${isEmer ? 'EMER - ' : ''}${label}`;
+    const warningTitle = `${isPDS ? 'PDS ' : ''}${isEmer ? 'EMER - ' : ''}${isConsid && isSvr ? 'CONSIDERABLE ' : ''}${label}`;
     const warningId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     warnings.push({
         id: warningId,

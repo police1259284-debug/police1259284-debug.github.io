@@ -104,9 +104,10 @@
         </select>
       </div>
 
-      <div class="sec is-hidden" id="svr-sec">
+      <div class="sec" id="svr-sec">
         <div class="slabel">Severe T'Storm Hazards</div>
         <div class="tags">
+          <button class="tag" id="tag-svr-consid" onclick="toggleTag('svr-consid')">CONSIDERABLE</button>
           <button class="tag pds" id="tag-svr-pds" onclick="toggleTag('svr-pds')">PDS</button>
           <button class="tag" id="tag-destr" onclick="toggleTag('destr')">DESTRUCTIVE</button>
           <button class="tag" id="tag-torposs" onclick="toggleTag('torposs')">TORNADO POSSIBLE</button>
@@ -115,10 +116,13 @@
           <div><label>MAX WIND GUST</label>
             <select id="wind">
               <option>60 MPH</option>
+              <option>65 MPH</option>
               <option>70 MPH</option>
               <option>75 MPH</option>
               <option>80 MPH</option>
+              <option>85 MPH</option>
               <option>90 MPH</option>
+              <option>95 MPH</option>
               <option>100 MPH</option>
             </select>
           </div>
@@ -132,14 +136,23 @@
         </div>
         <label>HAIL SIZE</label>
         <select id="hail">
+          <option>PEA SIZE (0.25 IN)</option>
+          <option>0.50 IN</option>
           <option>PENNY SIZE (0.75 IN)</option>
-          <option>NICKEL SIZE (0.88 IN)</option>
           <option>QUARTER SIZE (1.00 IN)</option>
           <option>HALF DOLLAR SIZE (1.25 IN)</option>
+          <option>1.50 IN</option>
           <option>GOLF BALL SIZE (1.75 IN)</option>
+          <option>2.00 IN</option>
+          <option>2.25 IN</option>
           <option>TENNIS BALL SIZE (2.50 IN)</option>
           <option>BASEBALL SIZE (2.75 IN)</option>
+          <option>3.00 IN</option>
+          <option>3.25 IN</option>
+          <option>3.50 IN</option>
           <option>SOFTBALL SIZE (4.00 IN)</option>
+          <option>4.50 IN</option>
+          <option>5.00 IN</option>
         </select>
       </div>
 
