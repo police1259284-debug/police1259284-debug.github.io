@@ -4,6 +4,10 @@ const MAPTILER_STYLE = 'https://api.maptiler.com/maps/dataviz-dark/style.json';
 
 // URL to the GeoJSON dataset of the counties in the US
 const COUNTIES_GEOJSON_URL = 'https://raw.githubusercontent.com/BusyBird15/BusyBird15.github.io/refs/heads/main/assets/countymaps/counties-simplified.json';
+const NWS_ALERTS_GEOJSON_URL = 'https://api.weather.gov/alerts/active';
+const NWS_STATIONS_GEOJSON_URL = 'https://api.weather.gov/radar/stations';
+const MIN_COUNTY_INTERSECT_ACRES = 5000;
+const SQ_METERS_PER_ACRE = 4046.8564224;
 
 
 
@@ -38,6 +42,11 @@ var warnings = [];
 var activePopup = null;
 var countyData = null;
 var selectedCountyFeatures = {};
+var nwsAlertsEnabled = false;
+var nwsAlertsRefreshTimer = null;
+var radarStationsEnabled = false;
+var radarStationsRefreshTimer = null;
+var selectedRadarStation = null;
 
 const labelOverlayLayerIds = [
     'radar',
@@ -48,10 +57,209 @@ const labelOverlayLayerIds = [
     'county-hit-fill',
     'county-hit-line',
     'counties-fill',
-    'counties-line'
+    'counties-line',
+    'nws-alerts-fill',
+    'nws-alerts-line',
+    'nws-alerts-point',
+    'radar-stations-dot'
 ];
 // Empty feature collection generator
 const emptyFc = () => ({ type: 'FeatureCollection', features: [] });
+
+function escapeHtml(value) {
+        return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+}
+
+function fmtNwsText(value, fallback = 'N/A') {
+        const text = String(value ?? '').trim();
+        if (!text) return fallback;
+        return escapeHtml(text).replace(/\n/g, '<br>');
+}
+
+function buildNwsAlertPopupHtml(feature) {
+        const p = feature?.properties || {};
+        const title = escapeHtml(p.event || p.headline || 'NWS Alert');
+        const headline = fmtNwsText(p.headline);
+        const areaDesc = fmtNwsText(p.areaDesc);
+        const severity = fmtNwsText(p.severity);
+        const certainty = fmtNwsText(p.certainty);
+        const urgency = fmtNwsText(p.urgency);
+        const sent = fmtNwsText(p.sent);
+        const effective = fmtNwsText(p.effective);
+        const expires = fmtNwsText(p.expires);
+        const sender = fmtNwsText(p.senderName || p.sender);
+        const description = fmtNwsText(p.description);
+        const instruction = fmtNwsText(p.instruction, 'No specific instruction provided.');
+
+        return `
+            <div class="pop">
+                <div class="pop-type" style="color:#f7ff66">${title}</div>
+                <div class="pop-meta">HEADLINE: ${headline}<br>AREA: ${areaDesc}<br>SEVERITY: ${severity}<br>CERTAINTY: ${certainty}<br>URGENCY: ${urgency}<br>SENT: ${sent}<br>EFFECTIVE: ${effective}<br>EXPIRES: ${expires}<br>SENDER: ${sender}</div>
+                <div class="pop-meta pop-meta-nws">DESCRIPTION:<br>${description}</div>
+                <div class="pop-meta pop-meta-nws">INSTRUCTION:<br>${instruction}</div>
+            </div>`;
+}
+
+function getNwsAlertLayerIds() {
+    return ['nws-alerts-fill', 'nws-alerts-line', 'nws-alerts-point'];
+}
+
+function getRadarStationLayerIds() {
+    return ['radar-stations-dot'];
+}
+
+function setNwsAlertsVisibility(enabled) {
+    const vis = enabled ? 'visible' : 'none';
+    getNwsAlertLayerIds().forEach((id) => {
+        if (map.getLayer(id)) {
+            map.setLayoutProperty(id, 'visibility', vis);
+        }
+    });
+}
+
+function updateNwsToggleButton() {
+    const btn = document.getElementById('nwsToggleBtn');
+    if (!btn) return;
+    btn.textContent = `ALERTS: ${nwsAlertsEnabled ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('is-on', nwsAlertsEnabled);
+}
+
+function setRadarStationsVisibility(enabled) {
+    const vis = enabled ? 'visible' : 'none';
+    getRadarStationLayerIds().forEach((id) => {
+        if (map.getLayer(id)) {
+            map.setLayoutProperty(id, 'visibility', vis);
+        }
+    });
+}
+
+function updateRadarStationsToggleButton() {
+    const btn = document.getElementById('stationsToggleBtn');
+    if (!btn) return;
+    btn.textContent = `STATIONS: ${radarStationsEnabled ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('is-on', radarStationsEnabled);
+}
+
+function buildRadarTileUrl(stationId) {
+    if (stationId) {
+        const sid = String(stationId).toLowerCase();
+        return `https://opengeo.ncep.noaa.gov/geoserver/${sid}/ows?service=WMS&request=GetMap&format=image/png&transparent=true&layers=${sid}_sr_bref&transparent=true&version=1.4.1&width=256&height=256&srs=EPSG:3857&bbox={bbox-epsg-3857}&cachebust=${Date.now()}`;
+    }
+
+    return 'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}&cachebust=' + Date.now();
+}
+
+function refreshRadarTiles() {
+    const source = map.getSource('radar');
+    if (!source) return;
+    source.setTiles([buildRadarTileUrl(selectedRadarStation)]);
+}
+
+async function refreshNwsAlertsLayer() {
+    const res = await fetch(NWS_ALERTS_GEOJSON_URL, {
+        headers: { Accept: 'application/geo+json' }
+    });
+    if (!res.ok) throw new Error(`NWS alerts request failed (${res.status})`);
+    const fc = await res.json();
+    if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
+        throw new Error('NWS alerts response was not a valid FeatureCollection');
+    }
+    setGeojson('nws-alerts', fc);
+}
+
+async function refreshRadarStationsLayer() {
+    const res = await fetch(NWS_STATIONS_GEOJSON_URL, {
+        headers: { Accept: 'application/geo+json' }
+    });
+    if (!res.ok) throw new Error(`NWS stations request failed (${res.status})`);
+    const fc = await res.json();
+    if (!fc || fc.type !== 'FeatureCollection' || !Array.isArray(fc.features)) {
+        throw new Error('NWS stations response was not a valid FeatureCollection');
+    }
+    setGeojson('radar-stations', fc);
+}
+
+async function toggleNwsAlerts() {
+    nwsAlertsEnabled = !nwsAlertsEnabled;
+    updateNwsToggleButton();
+    setNwsAlertsVisibility(nwsAlertsEnabled);
+
+    if (nwsAlertsEnabled) {
+        try {
+            await refreshNwsAlertsLayer();
+            if (!nwsAlertsRefreshTimer) {
+                nwsAlertsRefreshTimer = setInterval(async () => {
+                    try {
+                        await refreshNwsAlertsLayer();
+                    } catch (err) {
+                        console.error(err);
+                    }
+                }, 120000);
+            }
+            setApplicationStatusText('NWS ALERT LAYER ENABLED');
+        } catch (err) {
+            console.error(err);
+            nwsAlertsEnabled = false;
+            updateNwsToggleButton();
+            setNwsAlertsVisibility(false);
+            setApplicationStatusText('NWS ALERT LAYER UNAVAILABLE');
+        }
+    } else {
+        setApplicationStatusText('NWS ALERT LAYER DISABLED');
+    }
+}
+
+function onRadarStationClick(feature) {
+    const p = feature?.properties || {};
+    const stationIdRaw = p.stationIdentifier || p.identifier || p.id || 'UNKNOWN';
+    const stationId = String(stationIdRaw).trim();
+    const stationName = p.name || 'Unnamed station';
+    const stationMatch = stationId.match(/[A-Za-z0-9]{3,5}/);
+    if (!stationMatch) {
+        setApplicationStatusText(`STATION CLICK FAILED — INVALID ID (${stationId})`);
+        return;
+    }
+
+    selectedRadarStation = stationMatch[0].toLowerCase();
+    refreshRadarTiles();
+    console.log('RADAR SOURCE UPDATED', { stationId: selectedRadarStation, stationName, feature });
+    setApplicationStatusText(`RADAR STATION SET — ${selectedRadarStation.toUpperCase()} (${stationName})`);
+}
+
+async function toggleRadarStations() {
+    radarStationsEnabled = !radarStationsEnabled;
+    updateRadarStationsToggleButton();
+    setRadarStationsVisibility(radarStationsEnabled);
+
+    if (radarStationsEnabled) {
+        try {
+            await refreshRadarStationsLayer();
+            if (!radarStationsRefreshTimer) {
+                radarStationsRefreshTimer = setInterval(async () => {
+                    try {
+                        await refreshRadarStationsLayer();
+                    } catch (err) {
+                        console.error(err);
+                    }
+                }, 300000);
+            }
+            setApplicationStatusText('RADAR STATIONS LAYER ENABLED');
+        } catch (err) {
+            console.error(err);
+            radarStationsEnabled = false;
+            updateRadarStationsToggleButton();
+            setRadarStationsVisibility(false);
+            setApplicationStatusText('RADAR STATIONS LAYER UNAVAILABLE');
+        }
+    } else {
+        setApplicationStatusText('RADAR STATIONS LAYER DISABLED');
+    }
+}
 
 
 function getCountyName(props = {}) {
@@ -95,11 +303,15 @@ function countyIntersections(poly) {
         if (!feat || !feat.geometry) continue;
 
         try {
-            if (turf.booleanIntersects(poly, feat)) {
-                hitFeatures.push(feat);
-                const name = getCountyName(feat.properties);
-                if (name) nameSet.add(name);
-            }
+            const overlap = turf.intersect(poly, feat);
+            if (!overlap) continue;
+
+            const overlapAcres = turf.area(overlap) / SQ_METERS_PER_ACRE;
+            if (overlapAcres < MIN_COUNTY_INTERSECT_ACRES) continue;
+
+            hitFeatures.push(feat);
+            const name = getCountyName(feat.properties);
+            if (name) nameSet.add(name);
         } catch (_) {
             // Skip malformed county geometry while preserving the rest.
         }
@@ -145,7 +357,7 @@ map.on('load', async () => {
     map.addSource('radar', {
         type: 'raster',
         tiles: [
-            'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}&cachebust=' + Date.now()
+            buildRadarTileUrl(selectedRadarStation)
         ],
         tileSize: 256
     });
@@ -158,10 +370,7 @@ map.on('load', async () => {
 
     // Keep the radar layer updated every minute
     setInterval(() => {
-        const source = map.getSource('radar');
-        if (source) source.setTiles([
-            'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?service=WMS&request=GetMap&version=1.1.1&layers=nexrad-n0q-900913&styles=&format=image/png&transparent=true&srs=EPSG:3857&width=256&height=256&bbox={bbox-epsg-3857}&cachebust=' + Date.now()
-        ]);
+        refreshRadarTiles();
     }, 60000);
 
     map.addSource('draw-pts', { type: 'geojson', data: emptyFc() });
@@ -252,6 +461,62 @@ map.on('load', async () => {
         }
     });
 
+    map.addSource('nws-alerts', { type: 'geojson', data: emptyFc() });
+    map.addLayer({
+        id: 'nws-alerts-fill',
+        type: 'fill',
+        source: 'nws-alerts',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        layout: { visibility: 'none' },
+        paint: {
+            'fill-color': '#e3f200',
+            'fill-opacity': 0.12
+        }
+    });
+    map.addLayer({
+        id: 'nws-alerts-line',
+        type: 'line',
+        source: 'nws-alerts',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        layout: { visibility: 'none' },
+        paint: {
+            'line-color': '#f7ff66',
+            'line-width': 2,
+            'line-opacity': 0.9
+        }
+    });
+    map.addLayer({
+        id: 'nws-alerts-point',
+        type: 'circle',
+        source: 'nws-alerts',
+        filter: ['==', ['geometry-type'], 'Point'],
+        layout: { visibility: 'none' },
+        paint: {
+            'circle-radius': 5,
+            'circle-color': '#f7ff66',
+            'circle-stroke-color': '#000000',
+            'circle-stroke-width': 1.25
+        }
+    });
+
+    map.addSource('radar-stations', { type: 'geojson', data: emptyFc() });
+    map.addLayer({
+        id: 'radar-stations-dot',
+        type: 'circle',
+        source: 'radar-stations',
+        filter: ['==', ['geometry-type'], 'Point'],
+        layout: { visibility: 'none' },
+        paint: {
+            'circle-radius': 6,
+            'circle-color': '#49b3ff',
+            'circle-stroke-color': '#001524',
+            'circle-stroke-width': 1
+        }
+    });
+
+    updateNwsToggleButton();
+    updateRadarStationsToggleButton();
+
     try {
         const res = await fetch(COUNTIES_GEOJSON_URL);
         if (!res.ok) throw new Error(`County dataset request failed (${res.status})`);
@@ -332,6 +597,35 @@ map.on('load', async () => {
         }
     });
 
+    map.on('mouseenter', 'nws-alerts-fill', () => {
+        map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'nws-alerts-fill', () => {
+        if (!drawMode && !countySelectMode && !isDraggingStart) map.getCanvas().style.cursor = '';
+    });
+    map.on('click', 'nws-alerts-fill', (e) => {
+        const f = e.features && e.features[0];
+        if (!f) return;
+        if (activePopup) activePopup.remove();
+
+        activePopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+            .setLngLat(e.lngLat)
+            .setHTML(buildNwsAlertPopupHtml(f))
+            .addTo(map);
+    });
+
+    map.on('mouseenter', 'radar-stations-dot', () => {
+        map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'radar-stations-dot', () => {
+        if (!drawMode && !countySelectMode && !isDraggingStart) map.getCanvas().style.cursor = '';
+    });
+    map.on('click', 'radar-stations-dot', (e) => {
+        const f = e.features && e.features[0];
+        if (!f) return;
+        onRadarStationClick(f);
+    });
+
     map.on('mouseenter', 'draw-pts', () => {
         if (lineBackPoint && !drawMode) map.getCanvas().style.cursor = 'grab';
     });
@@ -378,6 +672,12 @@ map.on('mouseup', function () {
 function setGeojson(sourceId, data) {
     const src = map.getSource(sourceId);
     if (src) src.setData(data);
+}
+
+function degToCardinal(deg) {
+    const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    const index = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
+    return cardinals[index];
 }
 
 function updateDrawLayers() {
@@ -434,7 +734,7 @@ function phenomChange() {
     const v = document.getElementById('phenom').value;
     currentPhenom = v;
     document.getElementById('tor-sec').style.display = (v === 'TOR' || v === 'TOA') ? '' : 'none';
-    document.getElementById('svr-sec').style.display = (v === 'SVR' || v === 'SVA') ? '' : 'none';
+    document.getElementById('svr-sec').style.display = (v === 'SVR' || v === 'SVA' || v === 'TOR') ? '' : 'none';
     document.getElementById('issueBtn').textContent = (v === 'TOA' || v === 'SVA') ? 'ISSUE WATCH' : 'ISSUE WARNING';
 }
 
@@ -735,7 +1035,7 @@ function issueProduct() {
             title: warningTitle,
             issued: `${localDisp} ${dateStr}`,
             expires: exZ,
-            motion: isWatch ? 'AREA WATCH' : `${motDir} DEG AT ${motSpdMph} MPH`,
+            motion: isWatch ? 'AREA WATCH' : `${degToCardinal(motDir)} AT ${motSpdMph} MPH`,
             counties: clist || 'NONE'
         }
     });
@@ -755,7 +1055,9 @@ function issueProduct() {
     const hailV = document.getElementById('hail')?.value || '';
 
     let hazard = '';
-    if (phenom === 'TOR' || phenom === 'TOA') {
+    if (phenom === 'TOR') {
+        hazard = `* TORNADO...${torSrc}\n* HAIL...${hailV}\n* WIND...${wind} EXPECTED`;
+    } else if (phenom === 'TOA') {
         hazard = `* TORNADO...${torSrc}\n* HAIL...POSSIBLE\n* WIND...POSSIBLE`;
     } else if (phenom === 'SVR' || phenom === 'SVA') {
         hazard = `* WIND...${wind} EXPECTED\n* HAIL...${hailV}${isTorPoss ? '\n* TORNADO...POSSIBLE' : ''}`;
@@ -785,35 +1087,70 @@ function issueProduct() {
             ? '* THIS IS A SEVERE THUNDERSTORM WATCH. CONDITIONS ARE FAVORABLE FOR DAMAGING WINDS AND LARGE HAIL.'
             : '';
 
-    const watchLead = isWatch
-        ? `${countyLine}\n\n${watchActionLine}\n\n* VALID UNTIL ${exZ}.`
-        : `${countyLine}\n\n* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '')} NEAR THE WARNING AREA, MOVING ${motDir} DEG AT ${motSpdMph} MPH.`;
+    const warningLead = `* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '').trim()} NEAR THE WARNING AREA, MOVING ${degToCardinal(motDir)} AT ${motSpdMph} MPH.`;
+    const countyBullet = currentCounties.length
+        ? currentCounties.map(c => `  ${c} COUNTY IN TEXAS...`).join('\n')
+        : '  NO COUNTIES DETECTED...';
+    const impactLine = phenom === 'TOR'
+        ? 'FLYING DEBRIS WILL BE DANGEROUS. MOBILE HOMES MAY BE DAMAGED OR DESTROYED. DAMAGE TO ROOFS, WINDOWS, AND VEHICLES IS LIKELY.'
+        : phenom === 'SVR'
+            ? 'DESTRUCTIVE WINDS AND LARGE HAIL MAY DAMAGE VEHICLES, ROOFS, SIDING, AND TREES.'
+            : 'IMMEDIATE PROTECTIVE ACTION MAY BE REQUIRED.';
+    const sourceLine = phenom === 'TOR' || phenom === 'TOA'
+        ? `TORNADO...${torSrc}`
+        : phenom === 'SVR' || phenom === 'SVA'
+            ? `WIND...${wind} EXPECTED`
+            : 'SOURCE...RADAR INDICATED';
+    const hailSummary = phenom === 'TOR' || phenom === 'SVR' || phenom === 'SVA'
+        ? `MAX HAIL SIZE...${hailV || '<.75 IN'}`
+        : '';
+    const productLabel = phenom === 'TOR'
+        ? 'Tornado Warning'
+        : phenom === 'SVR'
+            ? 'Severe Thunderstorm Warning'
+            : phenom === 'TOA'
+                ? 'Tornado Watch'
+                : phenom === 'SVA'
+                    ? 'Severe Thunderstorm Watch'
+                    : phenom === 'FFW'
+                        ? 'Flash Flood Warning'
+                        : 'Snow Squall Warning';
 
     const product =
         `${wmos[phenom]} K${cwa} ${zulu}
 ${pils[phenom]}${cwa}
 
-BULLETIN - INITIAL BULLETIN
-${label}
-NATIONAL WEATHER SERVICE TEXAS ALERT SERVICE
+BULLETIN - ${isWatch ? 'WATCH STATEMENT' : 'EAS ACTIVATION REQUESTED'}
+${productLabel}
+Texas Alert Service ${cwa}
 ${localDisp} ${dateStr}
-${tagLines.length ? '\n' + tagLines.join('\n') + '\n' : ''}
-...${label} ISSUED...
 
-${watchLead}
+The Texas Alert Service has issued a
 
-* HAZARD...
-${hazard}
+* ${productLabel} for...
+${countyBullet}
 
-* IMPACT... IMMEDIATE PROTECTIVE ACTION MAY BE REQUIRED.
+* UNTIL ${localDisp.toUpperCase()}.
 
-PRECAUTIONARY/PREPAREDNESS ACTIONS...
+${isWatch ? watchActionLine : warningLead}
 
-${action}
+  HAZARD...${hazard.replace(/\*\s*/g, '').split('\n')[0] || 'SEVERE WEATHER THREAT.'}
+
+  SOURCE...${sourceLine.replace(/^[A-Z ]+\.\.\./, '')}
+
+  IMPACT...${impactLine}
+
+${tagLines.length ? tagLines.join('\n') + '\n\n' : ''}PRECAUTIONARY/PREPAREDNESS ACTIONS...
+
+${action || 'TAKE COVER NOW IN A STURDY STRUCTURE AND STAY AWAY FROM WINDOWS.'}
 
 &&
 
-${pils[phenom]}...${cwa}
+LAT...LON ${currentCounties.length ? 'AREA DEFINED BY SELECTED COUNTIES' : 'AREA DEFINED BY DRAWN POLYGON'}
+TIME...MOT...LOC ${zulu} ${motDir}DEG ${motSpdMph}MPH
+
+${sourceLine}
+${hailSummary}
 
 $$`;
 

@@ -82,6 +82,12 @@ html {
     white-space: nowrap;
 }
 
+.tb.is-on {
+    color: var(--cyan);
+    border-color: var(--cyan);
+    background: rgba(0, 255, 255, 0.1);
+}
+
 .tb-r {
     color: var(--red);
     border-color: var(--red);
@@ -511,6 +517,14 @@ label {
     color: #555;
     margin-bottom: 8px;
     line-height: 1.6;
+}
+
+.pop-meta-nws {
+    max-height: 140px;
+    overflow-y: auto;
+    white-space: normal;
+    border-top: 1px solid #111;
+    padding-top: 6px;
 }
 
 .pop-btns {
