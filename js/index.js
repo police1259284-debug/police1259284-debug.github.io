@@ -517,6 +517,9 @@ map.on('load', async () => {
     updateNwsToggleButton();
     updateRadarStationsToggleButton();
 
+    loadWarningsFromStorage();
+    refreshWarningsLayer();
+
     try {
         const res = await fetch(COUNTIES_GEOJSON_URL);
         if (!res.ok) throw new Error(`County dataset request failed (${res.status})`);
@@ -1035,11 +1038,13 @@ function issueProduct() {
             title: warningTitle,
             issued: `${localDisp} ${dateStr}`,
             expires: exZ,
+            expiresAt: exp.getTime(),
             motion: isWatch ? 'AREA WATCH' : `${degToCardinal(motDir)} AT ${motSpdMph} MPH`,
             counties: clist || 'NONE'
         }
     });
     refreshWarningsLayer();
+    saveWarningsToStorage();
     clearPreviewPolygon();
 
     let tagLines = [];
@@ -1165,6 +1170,7 @@ function editAlert(id) {
 function dropAlert(id) {
     warnings = warnings.filter((w) => w.id !== id);
     refreshWarningsLayer();
+    saveWarningsToStorage();
     if (activePopup) {
         activePopup.remove();
         activePopup = null;
@@ -1172,8 +1178,6 @@ function dropAlert(id) {
 }
 
 function clearAll() {
-    warnings = [];
-    refreshWarningsLayer();
     cancelDraw();
     currentPolygon = null; currentCounties = []; activeTags = {};
     selectedCountyFeatures = {};
@@ -1185,5 +1189,39 @@ function clearAll() {
     setApplicationStatusText('READY');
     document.getElementById('panel').classList.add('hidden');
 }
+
+function saveWarningsToStorage() {
+    try {
+        localStorage.setItem('tas_warnings', JSON.stringify(warnings));
+    } catch (e) {
+        console.error('Failed to save warnings to localStorage', e);
+    }
+}
+
+function loadWarningsFromStorage() {
+    try {
+        const raw = localStorage.getItem('tas_warnings');
+        if (!raw) return;
+        const stored = JSON.parse(raw);
+        if (!Array.isArray(stored)) return;
+        const now = Date.now();
+        warnings = stored.filter(w => w && w.properties && w.properties.expiresAt && w.properties.expiresAt > now);
+        saveWarningsToStorage();
+    } catch (e) {
+        console.error('Failed to load warnings from localStorage', e);
+    }
+}
+
+function pruneExpiredWarnings() {
+    const now = Date.now();
+    const before = warnings.length;
+    warnings = warnings.filter(w => w && w.properties && w.properties.expiresAt && w.properties.expiresAt > now);
+    if (warnings.length !== before) {
+        refreshWarningsLayer();
+        saveWarningsToStorage();
+    }
+}
+
+setInterval(pruneExpiredWarnings, 60000);
 
 phenomChange();
