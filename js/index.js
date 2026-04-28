@@ -36,6 +36,7 @@ setInterval(() => {
 var drawMode = false, drawPts = [];
 var countySelectMode = false;
 var lineBackPoint = null, isDraggingStart = false;
+var draggingCornerIdx = -1;
 var currentPolygon = null, currentCounties = [], currentPhenom = 'TOR';
 var activeTags = {};
 var warnings = [];
@@ -351,6 +352,7 @@ function liftLabelsAboveOverlays() {
 
     if (map.getLayer('draw-line')) map.moveLayer('draw-line');
     if (map.getLayer('draw-pts')) map.moveLayer('draw-pts');
+    if (map.getLayer('poly-corners-dots')) map.moveLayer('poly-corners-dots');
 }
 
 map.on('load', async () => {
@@ -383,6 +385,19 @@ map.on('load', async () => {
             'circle-color': '#00FFFF',
             'circle-stroke-color': '#00FFFF',
             'circle-stroke-width': 2
+        }
+    });
+
+    map.addSource('poly-corners', { type: 'geojson', data: emptyFc() });
+    map.addLayer({
+        id: 'poly-corners-dots',
+        type: 'circle',
+        source: 'poly-corners',
+        paint: {
+            'circle-radius': 9,
+            'circle-color': '#ffffff',
+            'circle-stroke-color': '#ff0000',
+            'circle-stroke-width': 2.5
         }
     });
 
@@ -635,6 +650,22 @@ map.on('load', async () => {
     map.on('mouseleave', 'draw-pts', () => {
         if (!drawMode && !isDraggingStart) map.getCanvas().style.cursor = '';
     });
+
+    map.on('mouseenter', 'poly-corners-dots', () => {
+        if (!drawMode && !isDraggingStart && draggingCornerIdx < 0) map.getCanvas().style.cursor = 'grab';
+    });
+    map.on('mouseleave', 'poly-corners-dots', () => {
+        if (!drawMode && !isDraggingStart && draggingCornerIdx < 0) map.getCanvas().style.cursor = '';
+    });
+    map.on('mousedown', 'poly-corners-dots', (e) => {
+        if (!currentPolygon || drawMode) return;
+        e.preventDefault();
+        const f = e.features && e.features[0];
+        if (!f) return;
+        draggingCornerIdx = parseInt(f.properties.idx, 10);
+        map.dragPan.disable();
+        map.getCanvas().style.cursor = 'grabbing';
+    });
 });
 
 // Start-point drag handling
@@ -648,28 +679,54 @@ map.on('mousedown', function (e) {
 });
 
 map.on('mousemove', function (e) {
-    if (!isDraggingStart) return;
-    const line = turf.lineString([lineBackPoint, drawPts[1]]);
-    const snapped = turf.nearestPointOnLine(line, turf.point([e.lngLat.lng, e.lngLat.lat]));
-    const snappedCoords = snapped.geometry.coordinates;
-    const totalLen = turf.length(line, { units: 'miles' });
-    const snapDist = turf.distance(turf.point(lineBackPoint), turf.point(snappedCoords), { units: 'miles' });
-    if (snapDist <= totalLen * 0.95) {
-        drawPts[0] = snappedCoords;
+    if (isDraggingStart) {
+        const line = turf.lineString([lineBackPoint, drawPts[1]]);
+        const snapped = turf.nearestPointOnLine(line, turf.point([e.lngLat.lng, e.lngLat.lat]));
+        const snappedCoords = snapped.geometry.coordinates;
+        const totalLen = turf.length(line, { units: 'miles' });
+        const snapDist = turf.distance(turf.point(lineBackPoint), turf.point(snappedCoords), { units: 'miles' });
+        if (snapDist <= totalLen * 0.95) {
+            drawPts[0] = snappedCoords;
+        }
+        setGeojson('draw-pts', {
+            type: 'FeatureCollection',
+            features: drawPts.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: p }, properties: {} }))
+        });
+        map.getCanvas().style.cursor = 'grabbing';
+        return;
     }
-    setGeojson('draw-pts', {
-        type: 'FeatureCollection',
-        features: drawPts.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: p }, properties: {} }))
-    });
-    map.getCanvas().style.cursor = 'grabbing';
+    if (draggingCornerIdx >= 0 && currentPolygon) {
+        const coords = currentPolygon.geometry.coordinates[0].map(c => [...c]);
+        coords[draggingCornerIdx] = [e.lngLat.lng, e.lngLat.lat];
+        if (draggingCornerIdx === 0) coords[4] = coords[0];
+        currentPolygon = turf.polygon([coords]);
+        const col = (currentPhenom === 'TOR' || currentPhenom === 'TOA') ? '#CC0000'
+            : (currentPhenom === 'SVR' || currentPhenom === 'SVA') ? '#FF8C00' : '#00AAFF';
+        renderPreviewPolygon(currentPolygon, col);
+        map.getCanvas().style.cursor = 'grabbing';
+    }
 });
 
 map.on('mouseup', function () {
-    if (!isDraggingStart) return;
-    isDraggingStart = false;
-    map.dragPan.enable();
-    map.getCanvas().style.cursor = lineBackPoint ? 'grab' : '';
-    buildPolygon();
+    if (isDraggingStart) {
+        isDraggingStart = false;
+        map.dragPan.enable();
+        map.getCanvas().style.cursor = lineBackPoint ? 'grab' : '';
+        buildPolygon();
+        return;
+    }
+    if (draggingCornerIdx >= 0) {
+        draggingCornerIdx = -1;
+        map.dragPan.enable();
+        map.getCanvas().style.cursor = '';
+        if (currentPolygon) {
+            const countyHits = countyIntersections(currentPolygon);
+            currentCounties = countyHits.names;
+            setGeojson('county-hit', { type: 'FeatureCollection', features: countyHits.features });
+            renderChips();
+            setApplicationStatusText(currentCounties.length + ' COUNTIES INTERSECTED — READY TO ISSUE');
+        }
+    }
 });
 
 function setGeojson(sourceId, data) {
@@ -702,6 +759,21 @@ function updateDrawLayers() {
 
 function clearPreviewPolygon() {
     setGeojson('preview-poly', emptyFc());
+    setGeojson('poly-corners', emptyFc());
+}
+
+function updateCornerHandles(poly) {
+    const polygon = poly || currentPolygon;
+    if (!polygon || countySelectMode) { setGeojson('poly-corners', emptyFc()); return; }
+    if (polygon.geometry.type !== 'Polygon') { setGeojson('poly-corners', emptyFc()); return; }
+    const coords = polygon.geometry.coordinates[0];
+    if (coords.length !== 5) { setGeojson('poly-corners', emptyFc()); return; }
+    const features = coords.slice(0, 4).map((c, i) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: c },
+        properties: { idx: i }
+    }));
+    setGeojson('poly-corners', { type: 'FeatureCollection', features });
 }
 
 function renderPreviewPolygon(poly, color) {
@@ -711,6 +783,7 @@ function renderPreviewPolygon(poly, color) {
         properties: { color }
     };
     setGeojson('preview-poly', { type: 'FeatureCollection', features: [feat] });
+    updateCornerHandles(poly);
 }
 
 function refreshWarningsLayer() {
@@ -980,6 +1053,11 @@ function issueProduct() {
     const ampm = localH >= 12 ? 'PM' : 'AM';
     const h12 = localH % 12 || 12;
     const localDisp = h12 + ':' + p(localM) + ' ' + ampm + ' Central';
+    // Expiry local 12-hour time display
+    const expH = exp.getHours(), expM = exp.getMinutes();
+    const expAmpm = expH >= 12 ? 'PM' : 'AM';
+    const expH12 = expH % 12 || 12;
+    const expLocalDisp = expH12 + ':' + p(expM) + ' ' + expAmpm + ' Central';
     // Speed field now stores MPH directly, round to nearest 5
     const motSpdMph = Math.round(parseFloat(motSpd) / 5) * 5 || 5;
 
@@ -1072,6 +1150,19 @@ function issueProduct() {
         hazard = `* SNOW SQUALL...SUDDEN WHITEOUT CONDITIONS\n* WIND GUSTS...UP TO 45 MPH`;
     }
 
+    // Build hazard summary line
+    let hazardSummary;
+    if (phenom === 'TOR') {
+        const torHazParts = ['TORNADO'];
+        if (wind) torHazParts.push(`${wind} WINDS`);
+        if (hailV) torHazParts.push(`${hailV} HAIL`);
+        hazardSummary = torHazParts.length === 1 ? 'TORNADO'
+            : torHazParts.length === 2 ? torHazParts.join(' AND ')
+            : torHazParts.slice(0, -1).join(', ') + ', AND ' + torHazParts[torHazParts.length - 1];
+    } else {
+        hazardSummary = hazard.replace(/\*\s*/g, '').split('\n')[0] || 'SEVERE WEATHER THREAT.';
+    }
+
     const action = phenom === 'TOR'
         ? ''
     : phenom === 'SVR'
@@ -1092,7 +1183,7 @@ function issueProduct() {
             ? '* THIS IS A SEVERE THUNDERSTORM WATCH. CONDITIONS ARE FAVORABLE FOR DAMAGING WINDS AND LARGE HAIL.'
             : '';
 
-    const warningLead = `* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '').trim()} NEAR THE WARNING AREA, MOVING ${degToCardinal(motDir)} AT ${motSpdMph} MPH.`;
+    const warningLead = `* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '').trim()} MOVING ${degToCardinal(motDir)} AT ${motSpdMph} MPH.`;
     const countyBullet = currentCounties.length
         ? currentCounties.map(c => `  ${c} COUNTY IN TEXAS...`).join('\n')
         : '  NO COUNTIES DETECTED...';
@@ -1135,11 +1226,11 @@ The Texas Alert Service has issued a
 * ${productLabel} for...
 ${countyBullet}
 
-* UNTIL ${localDisp.toUpperCase()}.
+* UNTIL ${expLocalDisp.toUpperCase()}.
 
 ${isWatch ? watchActionLine : warningLead}
 
-  HAZARD...${hazard.replace(/\*\s*/g, '').split('\n')[0] || 'SEVERE WEATHER THREAT.'}
+  HAZARD...${hazardSummary}
 
   SOURCE...${sourceLine.replace(/^[A-Z ]+\.\.\./, '')}
 
@@ -1151,8 +1242,19 @@ ${action || 'TAKE COVER NOW IN A STURDY STRUCTURE AND STAY AWAY FROM WINDOWS.'}
 
 &&
 
-LAT...LON ${currentCounties.length ? 'AREA DEFINED BY SELECTED COUNTIES' : 'AREA DEFINED BY DRAWN POLYGON'}
-TIME...MOT...LOC ${zulu} ${motDir}DEG ${motSpdMph}MPH
+${(() => {
+        if (isWatch) return '';
+        let polyForCoords = currentPolygon;
+        if (polyForCoords && polyForCoords.geometry.type !== 'Polygon') {
+            polyForCoords = turf.convex(polyForCoords) || null;
+        }
+        if (polyForCoords && polyForCoords.geometry.type === 'Polygon') {
+            const pairs = polyForCoords.geometry.coordinates[0].slice(0, -1)
+                .map(([lng, lat]) => `${Math.round(Math.abs(lat) * 100)} ${Math.round(Math.abs(lng) * 100)}`);
+            return 'LAT...LON ' + pairs.join(' ') + '\n';
+        }
+        return '';
+    })()}TIME...MOT...LOC ${zulu} ${motDir}DEG ${motSpdMph}MPH
 
 ${sourceLine}
 ${hailSummary}
