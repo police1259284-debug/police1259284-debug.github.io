@@ -1177,12 +1177,6 @@ function issueProduct() {
 
     const countyLine = currentCounties.map(c => c + ' TX').join('...') || 'NO COUNTIES DETECTED';
 
-    const watchActionLine = phenom === 'TOA'
-        ? '* THIS IS A TORNADO WATCH. CONDITIONS ARE FAVORABLE FOR TORNADOES.'
-        : phenom === 'SVA'
-            ? '* THIS IS A SEVERE THUNDERSTORM WATCH. CONDITIONS ARE FAVORABLE FOR DAMAGING WINDS AND LARGE HAIL.'
-            : '';
-
     const warningLead = `* AT ${localDisp}, ${isObs ? 'A TRAINED SPOTTER REPORTED' : 'DOPPLER RADAR INDICATED'} A ${label.replace('WARNING', '').trim()} MOVING ${degToCardinal(motDir)} AT ${motSpdMph} MPH.`;
     const countyBullet = currentCounties.length
         ? currentCounties.map(c => `  ${c} COUNTY IN TEXAS...`).join('\n')
@@ -1212,6 +1206,40 @@ function issueProduct() {
                         ? 'Flash Flood Warning'
                         : 'Snow Squall Warning';
 
+    const watchActionLine = phenom === 'TOA'
+        ? 'REMEMBER...A "Tornado" Watch means conditions are favorable for "tornadoes" in and close to the watch area.'
+        : phenom === 'SVA'
+            ? 'REMEMBER...A "Severe Thunderstorm" Watch means conditions are favorable for "severe thunderstorms" in and close to the watch area.'
+            : '';
+
+    const watchProductLabel = phenom === 'TOA' ? '"Tornado" Watch'
+        : phenom === 'SVA' ? '"Severe Thunderstorm" Watch'
+        : productLabel;
+
+    const bodySection = isWatch
+        ? `${watchProductLabel} for...
+${countyBullet}
+
+UNTIL ${expLocalDisp.toUpperCase()}.
+
+${watchActionLine}`
+        : `* ${productLabel} for...
+${countyBullet}
+
+* UNTIL ${expLocalDisp.toUpperCase()}.
+
+${warningLead}
+
+  HAZARD...${hazardSummary}
+
+  SOURCE...${sourceLine.replace(/^[A-Z ]+\.\.\./, '')}
+
+  IMPACT...${impactLine}
+
+${tagLines.length ? tagLines.join('\n') + '\n\n' : ''}PRECAUTIONARY/PREPAREDNESS ACTIONS...
+
+${action || 'TAKE COVER NOW IN A STURDY STRUCTURE AND STAY AWAY FROM WINDOWS.'}`;
+
     const product =
         `${wmos[phenom]} K${cwa} ${zulu}
 ${pils[phenom]}${cwa}
@@ -1223,22 +1251,7 @@ ${localDisp} ${dateStr}
 
 The Texas Alert Service has issued a
 
-* ${productLabel} for...
-${countyBullet}
-
-* UNTIL ${expLocalDisp.toUpperCase()}.
-
-${isWatch ? watchActionLine : warningLead}
-
-  HAZARD...${hazardSummary}
-
-  SOURCE...${sourceLine.replace(/^[A-Z ]+\.\.\./, '')}
-
-  IMPACT...${impactLine}
-
-${tagLines.length ? tagLines.join('\n') + '\n\n' : ''}PRECAUTIONARY/PREPAREDNESS ACTIONS...
-
-${action || 'TAKE COVER NOW IN A STURDY STRUCTURE AND STAY AWAY FROM WINDOWS.'}
+${bodySection}
 
 &&
 
